@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Employer {
+  id          String   @id @default(cuid())
+  name        String
+  domains     String[]
+  brokerName  String?
+  payrollName String?
+  plans       Plan[]
+  employees   Employee[]
+}
+
+model Plan {
+  id            String   @id @default(cuid())
+  employerId    String
+  employer      Employer @relation(fields: [employerId], references: [id])
+  discountBp    Int
+  lookback      Boolean
+  pctCap        Int
+  annualCapUsd  Int
+  holdingPolicy String?
+  offerings     Offering[]
+}
+
+model Offering {
+  id          String  @id @default(cuid())
+  planId      String
+  plan        Plan    @relation(fields: [planId], references: [id])
+  grantFmvUsd Int
+  startAt     DateTime
+  purchaseAt  DateTime
+  status      String
+  PayrollCycle PayrollCycle[]
+  BrokerInstruction BrokerInstruction[]
+  BrokerFill  BrokerFill[]
+  Waterfall   Waterfall[]
+}
+
+model Employee {
+  id            String   @id @default(cuid())
+  employerId    String
+  employer      Employer @relation(fields: [employerId], references: [id])
+  extEmployeeId String
+  email         String
+  basePay       Int
+  paySchedule   String
+  eligible      Boolean
+  enrollments   Enrollment[]
+}
+
+model Enrollment {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id])
+  offeringId  String
+  offering    Offering @relation(fields: [offeringId], references: [id])
+  contribPct  Int
+  assistOn    Boolean
+}
+
+model PayrollCycle {
+  id          String   @id @default(cuid())
+  offeringId  String
+  offering    Offering @relation(fields: [offeringId], references: [id])
+  cutoffAt    DateTime
+  payDate     DateTime
+}
+
+model Advance {
+  id            String   @id @default(cuid())
+  employeeId    String
+  payrollCycleId String
+  amount        Int
+  status        String
+}
+
+model ProgramAmount {
+  id           String  @id @default(cuid())
+  employeeId   String
+  offeringId   String
+  runningPrincipal Int
+}
+
+model BrokerInstruction {
+  id         String   @id @default(cuid())
+  offeringId String
+  offering   Offering @relation(fields: [offeringId], references: [id])
+  fileUri    String
+  createdAt  DateTime @default(now())
+}
+
+model BrokerFill {
+  id           String   @id @default(cuid())
+  offeringId   String
+  offering     Offering @relation(fields: [offeringId], references: [id])
+  employeeId   String
+  sharesBought Int
+  buyPrice     Int
+  sharesSold   Int
+  sellPrice    Int
+  proceeds     Int
+}
+
+model Waterfall {
+  id                 String   @id @default(cuid())
+  offeringId         String
+  offering           Offering @relation(fields: [offeringId], references: [id])
+  employeeId         String
+  repayPrincipal     Int
+  residualToEmployee Int
+  status             String
+}
+
+model Investor {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  kycStatus String
+  commitments Commitment[]
+}
+
+model Commitment {
+  id         String   @id @default(cuid())
+  investorId String
+  investor   Investor @relation(fields: [investorId], references: [id])
+  programId  String
+  amount     Int
+  status     String
+}
+
+model Allocation {
+  id         String  @id @default(cuid())
+  investorId String
+  programId  String
+  amountAllocated Int
+}
+
+model Statement {
+  id         String  @id @default(cuid())
+  investorId String
+  programId  String
+  pnl        Int
+  fees       Int
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  ts        DateTime @default(now())
+  actorType String
+  actorId   String
+  action    String
+  payloadJson String
+}
