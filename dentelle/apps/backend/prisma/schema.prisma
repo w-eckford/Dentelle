@@ -1,3 +1,4 @@
+/// TODO: Consider introducing a first-class Program model later to replace string programId in Commitment/Allocation/Statement.
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,154 +8,287 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum OfferingStatus {
+  DRAFT
+  ACTIVE
+  SETTLED
+  CANCELLED
+}
+
+enum AdvanceStatus {
+  PENDING
+  APPROVED
+  DISBURSED
+  REPAID
+  DEFAULTED
+  CANCELLED
+}
+
+enum CommitmentStatus {
+  PLEDGED
+  ACTIVE
+  FULFILLED
+  CANCELLED
+}
+
+enum WaterfallStatus {
+  PENDING
+  CALCULATED
+  DISTRIBUTED
+  ERROR
+}
+
 model Employer {
-  id          String   @id @default(cuid())
-  name        String
-  domains     String[]
-  brokerName  String?
-  payrollName String?
-  plans       Plan[]
-  employees   Employee[]
+  id           String    @id @default(cuid())
+  name         String
+  domains      String[]
+  brokerName   String?
+  payrollName  String?
+  plans        Plan[]
+  employees    Employee[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  /// Backward-compat: dedupe duplicate employer names before enforcing uniqueness.
+  @@unique([name])
 }
 
 model Plan {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   employerId    String
-  employer      Employer @relation(fields: [employerId], references: [id])
+  employer      Employer  @relation(fields: [employerId], references: [id], onDelete: Cascade)
   discountBp    Int
   lookback      Boolean
   pctCap        Int
   annualCapUsd  Int
   holdingPolicy String?
   offerings     Offering[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([employerId])
 }
 
 model Offering {
-  id          String  @id @default(cuid())
-  planId      String
-  plan        Plan    @relation(fields: [planId], references: [id])
-  grantFmvUsd Int
-  startAt     DateTime
-  purchaseAt  DateTime
-  status      String
-  PayrollCycle PayrollCycle[]
-  BrokerInstruction BrokerInstruction[]
-  BrokerFill  BrokerFill[]
-  Waterfall   Waterfall[]
+  id             String             @id @default(cuid())
+  planId         String
+  plan           Plan               @relation(fields: [planId], references: [id], onDelete: Cascade)
+  grantFmvUsd    Int
+  startAt        DateTime
+  purchaseAt     DateTime
+  /// Backward-compat: map legacy offering.status strings to OfferingStatus enum before migration.
+  status         OfferingStatus
+  payrollCycles  PayrollCycle[]
+  brokerFiles    BrokerInstruction[]
+  fills          BrokerFill[]
+  enrollments    Enrollment[]
+  programAmounts ProgramAmount[]
+  waterfalls     Waterfall[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([planId])
+  @@index([status])
 }
 
 model Employee {
-  id            String   @id @default(cuid())
-  employerId    String
-  employer      Employer @relation(fields: [employerId], references: [id])
-  extEmployeeId String
-  email         String
-  basePay       Int
-  paySchedule   String
-  eligible      Boolean
-  enrollments   Enrollment[]
+  id             String         @id @default(cuid())
+  employerId     String
+  employer       Employer       @relation(fields: [employerId], references: [id], onDelete: Cascade)
+  extEmployeeId  String
+  email          String
+  basePay        Int
+  paySchedule    String
+  eligible       Boolean
+  enrollments    Enrollment[]
+  advances       Advance[]
+  programAmounts ProgramAmount[]
+  brokerFills    BrokerFill[]
+  waterfalls     Waterfall[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  /// Backward-compat: resolve duplicate extEmployeeId records per employer before enforcing uniqueness.
+  @@unique([employerId, extEmployeeId])
+  @@index([employerId])
+  /// Backward-compat: resolve duplicate employee emails per employer before enforcing uniqueness.
+  @@unique([employerId, email])
 }
 
 model Enrollment {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   employeeId  String
-  employee    Employee @relation(fields: [employeeId], references: [id])
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   offeringId  String
-  offering    Offering @relation(fields: [offeringId], references: [id])
+  offering    Offering  @relation(fields: [offeringId], references: [id], onDelete: Cascade)
   contribPct  Int
   assistOn    Boolean
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  /// Backward-compat: dedupe multiple enrollments per employee/offering before enforcing uniqueness.
+  @@unique([employeeId, offeringId])
+  @@index([offeringId])
 }
 
 model PayrollCycle {
-  id          String   @id @default(cuid())
-  offeringId  String
-  offering    Offering @relation(fields: [offeringId], references: [id])
-  cutoffAt    DateTime
-  payDate     DateTime
+  id         String    @id @default(cuid())
+  offeringId String
+  offering   Offering  @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  cutoffAt   DateTime
+  payDate    DateTime
+  advances   Advance[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([offeringId, cutoffAt])
+  @@index([offeringId])
 }
 
 model Advance {
-  id            String   @id @default(cuid())
-  employeeId    String
-  payrollCycleId String
-  amount        Int
-  status        String
+  id               String        @id @default(cuid())
+  employeeId       String
+  payrollCycleId   String
+  amount           Int           // cents
+  /// Backward-compat: map legacy advance.status strings to AdvanceStatus enum before migration.
+  status           AdvanceStatus
+  employee         Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  payrollCycle     PayrollCycle  @relation(fields: [payrollCycleId], references: [id], onDelete: Restrict)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([employeeId])
+  @@index([payrollCycleId])
 }
 
 model ProgramAmount {
-  id           String  @id @default(cuid())
-  employeeId   String
-  offeringId   String
-  runningPrincipal Int
+  id               String      @id @default(cuid())
+  employeeId       String
+  offeringId       String
+  runningPrincipal Int         // cents
+  employee         Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  offering         Offering    @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  @@unique([employeeId, offeringId])
+  @@index([offeringId])
 }
 
 model BrokerInstruction {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   offeringId String
-  offering   Offering @relation(fields: [offeringId], references: [id])
+  offering   Offering  @relation(fields: [offeringId], references: [id], onDelete: Cascade)
   fileUri    String
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([offeringId])
 }
 
 model BrokerFill {
-  id           String   @id @default(cuid())
-  offeringId   String
-  offering     Offering @relation(fields: [offeringId], references: [id])
-  employeeId   String
-  sharesBought Int
-  buyPrice     Int
-  sharesSold   Int
-  sellPrice    Int
-  proceeds     Int
+  id            String    @id @default(cuid())
+  offeringId    String
+  offering      Offering  @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  sharesBought  Int
+  buyPrice      Int        // cents per share * 1e2
+  sharesSold    Int
+  sellPrice     Int        // cents per share * 1e2
+  proceeds      Int        // cents
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  /// Backward-compat: consolidate multiple fills per employee/offering or relax this unique constraint.
+  @@unique([offeringId, employeeId])
+  @@index([employeeId])
 }
 
 model Waterfall {
-  id                 String   @id @default(cuid())
+  id                 String          @id @default(cuid())
   offeringId         String
-  offering           Offering @relation(fields: [offeringId], references: [id])
+  offering           Offering        @relation(fields: [offeringId], references: [id], onDelete: Cascade)
   employeeId         String
-  repayPrincipal     Int
-  residualToEmployee Int
-  status             String
+  employee           Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  repayPrincipal     Int             // cents
+  residualToEmployee Int             // cents
+  /// Backward-compat: map legacy waterfall.status strings to WaterfallStatus enum before migration.
+  status             WaterfallStatus
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([offeringId, employeeId])
+  @@index([employeeId])
 }
 
 model Investor {
-  id        String   @id @default(cuid())
-  name      String
-  email     String
-  kycStatus String
+  id         String       @id @default(cuid())
+  name       String
+  /// Backward-compat: dedupe investor emails before enforcing uniqueness.
+  email      String       @unique
+  kycStatus  String
   commitments Commitment[]
+  allocations Allocation[]
+  statements  Statement[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 model Commitment {
-  id         String   @id @default(cuid())
+  id         String           @id @default(cuid())
   investorId String
-  investor   Investor @relation(fields: [investorId], references: [id])
   programId  String
   amount     Int
-  status     String
+  /// Backward-compat: map legacy commitment.status strings to CommitmentStatus enum before migration.
+  status     CommitmentStatus
+  investor   Investor         @relation(fields: [investorId], references: [id], onDelete: Cascade)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([investorId])
+  @@index([programId])
 }
 
 model Allocation {
-  id         String  @id @default(cuid())
-  investorId String
-  programId  String
+  id              String    @id @default(cuid())
+  investorId      String
+  investor        Investor  @relation(fields: [investorId], references: [id], onDelete: Cascade)
+  programId       String
   amountAllocated Int
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([investorId])
+  @@index([programId])
 }
 
 model Statement {
-  id         String  @id @default(cuid())
+  id         String    @id @default(cuid())
   investorId String
+  investor   Investor  @relation(fields: [investorId], references: [id], onDelete: Cascade)
   programId  String
   pnl        Int
   fees       Int
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([investorId])
+  @@index([programId])
 }
 
 model AuditEvent {
-  id        String   @id @default(cuid())
-  ts        DateTime @default(now())
-  actorType String
-  actorId   String
-  action    String
-  payloadJson String
+  id         String   @id @default(cuid())
+  ts         DateTime @default(now())
+  actorType  String
+  actorId    String
+  action     String
+  /// Backward-compat: migrate payloadJson text into structured JSON before switching column type.
+  payloadJson Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([actorType, actorId])
+  @@index([action])
+  @@index([ts])
 }
